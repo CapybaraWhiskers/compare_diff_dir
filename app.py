@@ -3,6 +3,7 @@ import os
 import shutil
 from pathlib import Path
 import hashlib
+import subprocess
 from typing import Dict, List, Tuple, Optional
 import pandas as pd
 from docx import Document
@@ -118,7 +119,8 @@ class FileComparator:
             "added": [],  # 追加されたファイル
             "deleted": [],  # 削除されたファイル
             "modified": [],  # 内容が変更されたファイル
-            "renamed": [],  # ファイル名が変更されたファイル
+            "renamed": [],  # ファイル名のみ変更されたファイル
+            "renamed_modified": [],  # 名前と内容が変更されたファイル
             "unchanged": [],  # 変更なし
         }
 
@@ -180,9 +182,9 @@ class FileComparator:
             progress_bar.progress(current_file / total_files)
             status_text.text(f"処理中... {current_file}/{total_files}")
 
-        # ファイル名変更の検出（内容ベース）
+        # ファイル名変更の検出（git diff を利用）
         try:
-            self._detect_renamed_files(result, files1, files2)
+            self._detect_renamed_files(result, dir1, dir2)
         except Exception as e:
             st.warning(f"ファイル名変更検出でエラーが発生しました: {str(e)}")
 
@@ -191,99 +193,68 @@ class FileComparator:
 
         return result
 
-    def _detect_renamed_files(self, result: Dict, files1: Dict, files2: Dict):
-        """ファイル名変更の検出（改善版）"""
-        # 追加・削除されたファイルの中で内容が同じものを探す
-        added_files = result["added"][:]  # コピーを作成
-        deleted_files = result["deleted"][:]  # コピーを作成
+    def _detect_renamed_files(self, result: Dict, dir1: str, dir2: str):
+        """git diff を利用してファイル名変更を検出"""
+        try:
+            completed = subprocess.run(
+                [
+                    "git",
+                    "diff",
+                    "--no-index",
+                    "--name-status",
+                    "-M",
+                    dir1,
+                    dir2,
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+            diff_lines = completed.stdout.splitlines()
+        except Exception:
+            diff_lines = []
 
-        files_to_remove_from_added = []
-        files_to_remove_from_deleted = []
-
-        # ファイルサイズも考慮した高速マッチング
-        added_file_info = []
-        deleted_file_info = []
-
-        # 追加ファイルの情報を収集
-        for added_file in added_files:
-            if added_file in files_to_remove_from_added:
+        for line in diff_lines:
+            if not line.strip():
                 continue
-            try:
-                file_path = added_file["path"]
-                file_size = os.path.getsize(file_path)
-                file_hash = self.calculate_file_hash(file_path)
-                if file_hash:
-                    added_file_info.append(
-                        {
-                            "file": added_file,
-                            "size": file_size,
-                            "hash": file_hash,
-                            "ext": Path(file_path).suffix.lower(),
-                        }
-                    )
-            except Exception:
-                continue
+            parts = line.split("\t")
+            status = parts[0]
 
-        # 削除ファイルの情報を収集
-        for deleted_file in deleted_files:
-            if deleted_file in files_to_remove_from_deleted:
-                continue
-            try:
-                file_path = deleted_file["path"]
-                file_size = os.path.getsize(file_path)
-                file_hash = self.calculate_file_hash(file_path)
-                if file_hash:
-                    deleted_file_info.append(
-                        {
-                            "file": deleted_file,
-                            "size": file_size,
-                            "hash": file_hash,
-                            "ext": Path(file_path).suffix.lower(),
-                        }
-                    )
-            except Exception:
-                continue
+            if status.startswith("R") and len(parts) >= 3:
+                similarity = int(status[1:])
+                old_path = parts[1]
+                new_path = parts[2]
+                old_name = os.path.relpath(old_path, dir1)
+                new_name = os.path.relpath(new_path, dir2)
 
-        # マッチング処理（ハッシュ + サイズ + 拡張子で判定）
-        for deleted_info in deleted_file_info:
-            if deleted_info["file"] in files_to_remove_from_deleted:
-                continue
+                # ファイル名の類似度が低い場合は無視
+                from difflib import SequenceMatcher
 
-            for added_info in added_file_info:
-                if added_info["file"] in files_to_remove_from_added:
+                name_ratio = SequenceMatcher(
+                    None,
+                    os.path.splitext(os.path.basename(old_name))[0],
+                    os.path.splitext(os.path.basename(new_name))[0],
+                ).ratio()
+                if name_ratio < 0.8:
                     continue
 
-                # ハッシュ、サイズ、拡張子が全て一致する場合
-                if (
-                    deleted_info["hash"] == added_info["hash"]
-                    and deleted_info["size"] == added_info["size"]
-                    and deleted_info["ext"] == added_info["ext"]
-                ):
+                entry = {
+                    "old_name": old_name,
+                    "new_name": new_name,
+                    "old_path": old_path,
+                    "new_path": new_path,
+                    "type": "renamed_modified" if similarity < 100 else "renamed",
+                }
 
-                    # ファイル名変更として認識
-                    result["renamed"].append(
-                        {
-                            "old_name": deleted_info["file"]["name"],
-                            "new_name": added_info["file"]["name"],
-                            "old_path": deleted_info["file"]["path"],
-                            "new_path": added_info["file"]["path"],
-                            "type": "renamed",
-                        }
-                    )
+                if similarity < 100:
+                    result["renamed_modified"].append(entry)
+                else:
+                    result["renamed"].append(entry)
 
-                    # 削除対象リストに追加
-                    files_to_remove_from_added.append(added_info["file"])
-                    files_to_remove_from_deleted.append(deleted_info["file"])
-                    break
-
-        # リストから削除（安全に削除）
-        for file_item in files_to_remove_from_added:
-            if file_item in result["added"]:
-                result["added"].remove(file_item)
-
-        for file_item in files_to_remove_from_deleted:
-            if file_item in result["deleted"]:
-                result["deleted"].remove(file_item)
+                # 追加・削除リストから除外
+                result["added"] = [a for a in result["added"] if a["name"] != new_name]
+                result["deleted"] = [d for d in result["deleted"] if d["name"] != old_name]
 
 
 def main():
@@ -356,7 +327,7 @@ def main():
         st.header("📊 比較結果")
 
         # サマリー表示
-        col1, col2, col3, col4, col5 = st.columns(5)
+        col1, col2, col3, col4, col5, col6 = st.columns(6)
 
         with col1:
             st.metric(
@@ -375,6 +346,8 @@ def main():
         with col4:
             st.metric("名前変更", len(result["renamed"]))
         with col5:
+            st.metric("名前+内容変更", len(result["renamed_modified"]))
+        with col6:
             st.metric("変更なし", len(result["unchanged"]))
 
         # フィルタリングオプション
@@ -383,8 +356,8 @@ def main():
 
         filter_options = st.multiselect(
             "表示する差分の種類を選択:",
-            ["追加", "削除", "内容変更", "名前変更", "変更なし"],
-            default=["追加", "削除", "内容変更", "名前変更"],
+            ["追加", "削除", "内容変更", "名前変更", "名前+内容変更", "変更なし"],
+            default=["追加", "削除", "内容変更", "名前変更", "名前+内容変更"],
         )
 
         # 結果の詳細表示とファイル選択
@@ -415,6 +388,15 @@ def main():
                     key=f"renamed_{item['new_name']}",
                 ):
                     selected_files.append(("renamed", item))
+
+        if "名前+内容変更" in filter_options and result["renamed_modified"]:
+            st.markdown("### 🔄📝 名前と内容が変更されたファイル")
+            for item in result["renamed_modified"]:
+                if st.checkbox(
+                    f"📄 {item['old_name']} → {item['new_name']}",
+                    key=f"renamed_modified_{item['new_name']}",
+                ):
+                    selected_files.append(("renamed_modified", item))
 
         if "変更なし" in filter_options and result["unchanged"]:
             st.markdown("### ✅ 変更なしのファイル")
@@ -464,6 +446,9 @@ def copy_files(selected_files: List[Tuple], save_dir: str, source_dir: str):
                     source_path = item["path2"]  # 内容変更後のファイル
                     dest_path = os.path.join(abs_save_dir, item["name"])
                 elif file_type == "renamed":
+                    source_path = item["new_path"]
+                    dest_path = os.path.join(abs_save_dir, item["new_name"])
+                elif file_type == "renamed_modified":
                     source_path = item["new_path"]
                     dest_path = os.path.join(abs_save_dir, item["new_name"])
                 elif file_type == "unchanged":
