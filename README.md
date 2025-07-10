@@ -172,7 +172,10 @@ python create_test_files.py
 5. **Python 3.13 互換性エラー（ThreadHandle/イベントループ）**
 
     - エラー: `TypeError: 'handle' must be a _ThreadHandle`
-    - 解決方法: エラーメッセージは無視してブラウザでアプリを使用してください。機能に問題はありません
+    - 解決方法: 以下のいずれかを試してください：
+        - エラーメッセージは無視してブラウザでアプリを使用（機能に問題はありません）
+        - 環境変数を設定: `$env:STREAMLIT_SERVER_ENABLE_WEBSOCKET_COMPRESSION = "false"`
+        - 代替ポートで起動: `streamlit run app.py --server.port 8502`
 
 6. **ファイル読み込みエラー**
     - ファイルが他のアプリケーションで開かれていないことを確認

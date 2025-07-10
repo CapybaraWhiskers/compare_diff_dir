@@ -87,7 +87,7 @@ def create_pdf_file(file_path: str, content: str):
             "元の内容": "Original Content",
             "変更された内容": "Modified Content",
             "削除されるファイル": "File to be Deleted",
-            "追加されるファイル": "Added File",
+            "追加したファイル": "Added File",
             "旧内容": "Old Content",
             "新内容": "New Content",
         }
@@ -201,15 +201,14 @@ def create_file_by_type(file_path: str, file_type: str, content: str):
 
 
 def create_test_files():
-    """テスト用のファイルを作成"""
+    """テスト用のファイルを作成（ベースファイルを使わず、変更前→変更後にコピーして差分加工）"""
     print("🗂️  テストファイルを作成中...")
 
-    # ディレクトリを作成（既存ファイルは削除せずにスキップ）
+    # ディレクトリを作成
     for dir_name in ["変更前ディレクトリ", "変更後ディレクトリ", "保存先ディレクトリ"]:
         if not os.path.exists(dir_name):
             os.makedirs(dir_name)
 
-    # サポートするファイル形式
     file_patterns = {
         "doc": {"ext": "doc", "type": "word"},
         "docx": {"ext": "docx", "type": "word"},
@@ -218,89 +217,92 @@ def create_test_files():
         "pdf": {"ext": "pdf", "type": "pdf"},
     }
 
-    # 各差分パターンを作成
-    test_cases = [
-        {
-            "pattern": "差分なし",
-            "content_before": "同じ内容",
-            "content_after": "同じ内容",
-        },
-        {
-            "pattern": "内容差分",
-            "content_before": "元の内容",
-            "content_after": "変更された内容",
-        },
-        {
-            "pattern": "ファイル名差分_変更前",
-            "content_before": "名前変更テスト",
-            "content_after": None,
-        },
-        {
-            "pattern": "ファイル名差分_変更後",
-            "content_before": None,
-            "content_after": "名前変更テスト",
-        },
-        {
-            "pattern": "削除",
-            "content_before": "削除されるファイル",
-            "content_after": None,
-        },
-        {
-            "pattern": "追加",
-            "content_before": None,
-            "content_after": "追加されるファイル",
-        },
-        {
-            "pattern": "内容・ファイル名差分_変更前",
-            "content_before": "旧内容",
-            "content_after": None,
-        },
-        {
-            "pattern": "内容・ファイル名差分_変更後",
-            "content_before": None,
-            "content_after": "新内容",
-        },
-    ]
-
-    # 各ファイル形式とテストケースの組み合わせでファイルを作成
-    # PDFの同一ファイル用テンプレートを最初に作成
-    master_pdf_path = "temp_master.pdf"
-    create_master_pdf_template(master_pdf_path)
-
+    # 1. 変更前ディレクトリに全パターンのファイルを作成
     for file_key, file_config in file_patterns.items():
         ext = file_config["ext"]
         file_type = file_config["type"]
+        # 差分なし
+        create_file_by_type(
+            f"変更前ディレクトリ/{file_key}_差分なし.{ext}", file_type, "同じ内容"
+        )
+        # 内容差分
+        create_file_by_type(
+            f"変更前ディレクトリ/{file_key}_内容差分.{ext}", file_type, "元の内容"
+        )
+        # 削除（pdfのみ英語、それ以外は日本語）
+        if file_type == "pdf":
+            delete_content = "File to be Deleted - PDF Version"
+        else:
+            delete_content = "これは削除専用のダミーファイルです - 日本語版"
+        create_file_by_type(
+            f"変更前ディレクトリ/{file_key}_削除.{ext}", file_type, delete_content
+        )
+        # ファイル名差分_変更前
+        create_file_by_type(
+            f"変更前ディレクトリ/{file_key}_ファイル名差分_変更前.{ext}",
+            file_type,
+            "同じ内容",
+        )
+        # 内容・ファイル名差分_変更前
+        if file_type == "pdf":
+            both_diff_before_content = "Old Content (before rename and content change)"
+        else:
+            both_diff_before_content = "旧内容"
+        create_file_by_type(
+            f"変更前ディレクトリ/{file_key}_内容・ファイル名差分_変更前.{ext}",
+            file_type,
+            both_diff_before_content,
+        )
 
-        print(f"\n📄 {file_key.upper()} ファイルを作成中...")
-
-        for case in test_cases:
-            pattern = case["pattern"]
-
-            # 変更前ディレクトリのファイル
-            if case["content_before"] is not None:
-                file_path = f"変更前ディレクトリ/{file_key}_{pattern}.{ext}"
-
-                # PDF特別処理：差分なしとファイル名差分では同一ファイルをコピー
-                if ext == "pdf" and pattern in ["差分なし", "ファイル名差分_変更前"]:
-                    shutil.copy2(master_pdf_path, file_path)
-                    print(f"✅ PDF作成: {file_path}")
-                else:
-                    create_file_by_type(file_path, file_type, case["content_before"])
-
-            # 変更後ディレクトリのファイル
-            if case["content_after"] is not None:
-                file_path = f"変更後ディレクトリ/{file_key}_{pattern}.{ext}"
-
-                # PDF特別処理：差分なしとファイル名差分では同一ファイルをコピー
-                if ext == "pdf" and pattern in ["差分なし", "ファイル名差分_変更後"]:
-                    shutil.copy2(master_pdf_path, file_path)
-                    print(f"✅ PDF作成: {file_path}")
-                else:
-                    create_file_by_type(file_path, file_type, case["content_after"])
-
-    # 一時ファイルを削除
-    if os.path.exists(master_pdf_path):
-        os.remove(master_pdf_path)
+    # 2. 変更後ディレクトリに必要なファイルをコピー
+    for file_key, file_config in file_patterns.items():
+        ext = file_config["ext"]
+        file_type = file_config["type"]
+        # 差分なし
+        shutil.copy2(
+            f"変更前ディレクトリ/{file_key}_差分なし.{ext}",
+            f"変更後ディレクトリ/{file_key}_差分なし.{ext}",
+        )
+        # 内容差分（コピー後に内容変更）
+        shutil.copy2(
+            f"変更前ディレクトリ/{file_key}_内容差分.{ext}",
+            f"変更後ディレクトリ/{file_key}_内容差分.{ext}",
+        )
+        create_file_by_type(
+            f"変更後ディレクトリ/{file_key}_内容差分.{ext}", file_type, "変更された内容"
+        )
+        # ファイル名差分_変更前→ファイル名差分_変更後（名前変更のみ）
+        shutil.copy2(
+            f"変更前ディレクトリ/{file_key}_ファイル名差分_変更前.{ext}",
+            f"変更後ディレクトリ/{file_key}_ファイル名差分_変更後.{ext}",
+        )
+        # 内容・ファイル名差分_変更前→内容・ファイル名差分_変更後（名前＋内容変更）
+        shutil.copy2(
+            f"変更前ディレクトリ/{file_key}_内容・ファイル名差分_変更前.{ext}",
+            f"変更後ディレクトリ/{file_key}_内容・ファイル名差分_変更後.{ext}",
+        )
+        # PDFのみ内容を変更
+        if file_type == "pdf":
+            create_file_by_type(
+                f"変更後ディレクトリ/{file_key}_内容・ファイル名差分_変更後.{ext}",
+                file_type,
+                "Changed Content (after rename and content change)",
+            )
+        else:
+            create_file_by_type(
+                f"変更後ディレクトリ/{file_key}_内容・ファイル名差分_変更後.{ext}",
+                file_type,
+                "新内容",
+            )
+    # 追加（変更後ディレクトリにのみ存在, 英語）
+    for file_key, file_config in file_patterns.items():
+        ext = file_config["ext"]
+        file_type = file_config["type"]
+        create_file_by_type(
+            f"変更後ディレクトリ/{file_key}_追加.{ext}",
+            file_type,
+            "This is a dummy file for addition only - English Version",
+        )
 
     print("\n✅ テストファイルの作成が完了しました！")
     print_test_summary()
@@ -344,12 +346,12 @@ def print_test_summary():
                 print(f"  📄 {file}")
 
     print("\n🎯 期待される差分検出結果:")
-    print("  ✅ 差分なし: 5ファイル (.doc, .docx, .pptx, .xlsx, .pdf)")
-    print("  📝 内容変更: 5ファイル")
-    print("  🔄 ファイル名変更: 5ファイル")
+    print("  ✅ 差分なし: 10ファイル (.doc, .docx, .pptx, .xlsx, .pdf)")
+    print("  📝 内容変更: 10ファイル")
+    print("  🔄 ファイル名変更: 10ファイル")
     print("  ➕ 追加: 5ファイル")
     print("  ➖ 削除: 5ファイル")
-    print("  ⚠️  内容・ファイル名変更: 10ファイル（5削除+5追加として検出）")
+    print("  ⚠️  内容・ファイル名変更: 10ファイル")
 
 
 if __name__ == "__main__":
